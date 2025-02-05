@@ -319,6 +319,7 @@ public class PdfToTxt {
     //Fix Headers
     private static String combineHeader(String text) {
         return text
+				 .replace("ßß ß", " ") //TODO need to check!
              .replace("ßßß", " ") // words inside headers
              .replace("ßß", "\n") // end of headers
              .replace("ß", "\n"); // beginning of headers

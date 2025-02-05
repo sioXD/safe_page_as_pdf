@@ -9,65 +9,89 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-import javax.imageio.ImageIO;
-
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import java.awt.image.BufferedImage;
 
 
 public class IllustrationExtractor {
 
     final Boolean delete_folder_contents = true;
 
-    public <PDOptionalContentProperties> void onlyPic(File inputDir, File outputDir)throws Exception{
-
+    public void onlyPic(File inputDir, File outputDir) throws Exception {
         if (!outputDir.exists()) {
-            outputDir.mkdirs();  // create dir, if not exists
+            outputDir.mkdirs();
         }
         if (delete_folder_contents) {
-            FileUtils.cleanDirectory(outputDir); // delete all files in the folder
+            FileUtils.cleanDirectory(outputDir);
         }
 
         File[] files = inputDir.listFiles((d, name) -> name.toLowerCase().endsWith(".pdf"));
 
         if (files != null) {
-            int count = 0;
-
             for (File file : files) {
-                count += 1;
+                try (PDDocument inputDocument = Loader.loadPDF(file)) {
+                    // Create output PDF for this input file
+                    try (PDDocument outputDocument = new PDDocument()) {
+                        int imageCount = 0;
 
-                try (PDDocument document = Loader.loadPDF(file)) {
-
-                    //* look here: https://stackoverflow.com/questions/7063324/extract-image-from-pdf-using-java
-
-                    int imageCount = 1;
-            
-                    for (PDPage page : document.getPages()) {  // :cite[3]:cite[6]
-                        PDResources resources = page.getResources();
-                        
-                        for (COSName name : resources.getXObjectNames()) {  // :cite[6]:cite[8]
-                            if (resources.isImageXObject(name)) {  // :cite[8]:cite[10]
-                                PDImageXObject image = (PDImageXObject) resources.getXObject(name);
-                                
-                                // Generate unique filename
-                                String suffix = image.getSuffix();
-                                if (suffix.isEmpty()) suffix = "png";  // Default format
-                                String fileName = String.format("image-%03d.%s", imageCount++, suffix);
-                                
-                                // Save image using ImageIO
-                                ImageIO.write(image.getImage(), suffix, new File(fileName));  // :cite[6]:cite[8]
-                                System.out.println("Saved image: " + fileName);
+                        for (PDPage page : inputDocument.getPages()) {
+                            PDResources resources = page.getResources();
+                            
+                            for (COSName name : resources.getXObjectNames()) {
+                                if (resources.isImageXObject(name)) {
+                                    PDImageXObject image = (PDImageXObject) resources.getXObject(name);
+                                    BufferedImage bufferedImage = image.getImage();
+                                    String suffix = image.getSuffix();
+                                    
+                                    // Create new image in output document
+                                    PDImageXObject outputImage = createOutputImage(outputDocument, bufferedImage, suffix);
+                                    
+                                    // Create page with image dimensions
+                                    PDPage newPage = new PDPage(
+                                        new PDRectangle(outputImage.getWidth(), outputImage.getHeight())
+                                    );
+                                    outputDocument.addPage(newPage);
+                                    
+                                    // Draw image on the page
+                                    try (PDPageContentStream cs = new PDPageContentStream(outputDocument, newPage)) {
+                                        cs.drawImage(outputImage, 0, 0, 
+                                            outputImage.getWidth(), 
+                                            outputImage.getHeight()
+                                        );
+                                    }
+                                    imageCount++;
+                                }
                             }
                         }
+
+                        if (imageCount > 0) {
+                            // Generate output filename
+                            String outputName = file.getName()
+                                .replaceFirst("\\.pdf$", "") + "_images.pdf";
+                            File outputFile = new File(outputDir, outputName);
+                            outputDocument.save(outputFile);
+                            System.out.println("Created image PDF: " + outputFile.getAbsolutePath());
+                        }
                     }
-
-
-
-
                 } catch (Exception e) {
-                    System.err.println(" --- " + "\u001b[31;1m" +"Error processing PDF file: " + "\u001B[0m" + e);
+                    System.err.println("Error processing " + file.getName() + ": " + e.getMessage());
                 }
+            }
+        }
+    }
 
-            }//EO-for
-        }//OFif
-    }//EOF
-}//EOC
-
+    private PDImageXObject createOutputImage(PDDocument document, BufferedImage image, String suffix) 
+        throws Exception {
+        if (suffix == null || suffix.isEmpty()) {
+            suffix = "png";
+        }
+        
+        return switch (suffix.toLowerCase()) {
+            case "jpg", "jpeg" -> JPEGFactory.createFromImage(document, image, 0.85f);
+            default -> LosslessFactory.createFromImage(document, image);
+        };
+    }
+}
